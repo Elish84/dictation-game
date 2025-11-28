@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>משחק הכתבה – מילים על מים</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #e3f2fd;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  margin: 0;
+}
+.card {
+  background: white;
+  padding: 20px;
+  max-width: 520px;
+  width: 90%;
+  border-radius: 16px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  text-align: center;
+}
+input {
+  width: 100%;
+  padding: 10px;
+  font-size: 1.2rem;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+  margin-top: 8px;
+}
+button {
+  padding: 10px 16px;
+  margin: 6px;
+  border-radius: 20px;
+  cursor: pointer;
+  border: none;
+  background: #2196f3;
+  color: white;
+}
+button:disabled { opacity: 0.5; }
+.feedback.success { color: green; }
+.feedback.error { color: red; }
+#hud {
+  display:flex;
+  justify-content:space-between;
+  font-size:0.9rem;
+  margin-top:10px;
+}
+.badge {
+  font-size:0.9rem;
+  color:#555;
+}
+#wordsStats {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  color:#333;
+}
+
+/* תעודת סיום */
+#certificate {
+  display:none;
+  margin-top:16px;
+  padding:16px;
+  border:3px double #333;
+  border-radius:12px;
+  background:#fffdf5;
+}
+#certificate h3 {
+  margin-top:0;
+}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2 id="title">משחק הכתבה 🎧💧</h2>
+
+  <!-- מסך פתיחה להזנת שם -->
+  <div id="nameScreen">
+    <p>מה השם שלך? 😊</p>
+    <input id="playerNameInput" placeholder="הקלד/י שם">
+    <button onclick="startGameFromName()">התחיל משחק ▶️</button>
+  </div>
+
+  <!-- אזור המשחק -->
+  <div id="gameScreen" style="display:none;">
+    <div class="badge">הקשיבי למילה, כתבי נכון, צברי נקודות ותעלי שלבים! 🌟</div>
+
+    <div id="hud">
+      <div>⏱ זמן: <span id="timer">0</span></div>
+      <div>⭐ שלב: <span id="level">1</span></div>
+      <div>🎯 ניקוד: <span id="score">0 / 0</span></div>
+    </div>
+    <div id="wordsStats">
+      🧮 מילים שהושלמו: <span id="completedWords">0</span> / <span id="totalWords">0</span>
+    </div>
+
+    <input id="answerInput" placeholder="כתוב כאן את המילה" disabled>
+
+    <div>
+      <button onclick="speak()">השמעה 🎧</button>
+      <button onclick="check()">בדיקה ✅</button>
+      <!-- מילה חדשה = דילוג → המילה נכנסת לסוף רשימת הטעויות -->
+      <button onclick="nextWord(true)">מילה חדשה 🔄</button>
+      <button onclick="endGame()">סיום משחק 🛑</button>
+    </div>
+
+    <div class="feedback" id="feedback"></div>
+    <div id="reinforce"></div>
+
+    <!-- תעודת סיום -->
+    <div id="certificate">
+      <h3>תעודת סיום 🎓</h3>
+      <p>
+        זאת לתעודה כי
+        <strong><span id="certName"></span></strong>
+        סיים/ה את משחק ההכתבה על מים
+        <br>בהצלחה מלאה – בלי אף טעות! 💯
+      </p>
+      <p>כל הכבוד! 👏</p>
+      <button onclick="window.print()">הדפס תעודה 🖨️</button>
+      <button onclick="sendSMS()">שליחת SMS 📲</button>
+    </div>
+  </div>
+</div>
+
+<audio id="bgm" loop>
+  <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg">
+</audio>
+
+<script>
+const ALL_WORDS = ["טל","טיפה","לטפטף","טובע","משוט","מטר","ממטרה","שטפון","אמבטיה","מרטיב"];
+
+let current = "";
+let mainQueue = [];
+let errorQueue = [];
+let reviewingErrors = false;
+
+let total = 0;          // סך כל ניסיונות
+let correct = 0;        // סך תשובות נכונות
+let level = 1;
+let playerName = "";
+let allCorrect = true;  // האם מעולם לא הייתה טעות / נגמר הזמן
+
+let uniqueCorrect = new Set(); // מילים שנענו נכון לפחות פעם אחת
+
+let timeLeft = 0;
+let timerId = null;
+let locked = false;
+let gameActive = false;
+
+const answerInput   = document.getElementById("answerInput");
+const feedback      = document.getElementById("feedback");
+const reinforce     = document.getElementById("reinforce");
+const timerEl       = document.getElementById("timer");
+const levelEl       = document.getElementById("level");
+const scoreEl       = document.getElementById("score");
+const certEl        = document.getElementById("certificate");
+const certNameEl    = document.getElementById("certName");
+const completedEl   = document.getElementById("completedWords");
+const totalWordsEl  = document.getElementById("totalWords");
+
+totalWordsEl.textContent = ALL_WORDS.length;
+
+// צלילים
+function playTone(freq,d){
+  const C = new (window.AudioContext||window.webkitAudioContext)();
+  const o = C.createOscillator();
+  o.frequency.value=freq; o.connect(C.destination); o.start();
+  setTimeout(()=>{o.stop();C.close();},d);
+}
+function successSound(){
+  playTone(900,180);
+  setTimeout(()=>playTone(1200,180),220);
+}
+function errorSound(){
+  playTone(400,300);
+  setTimeout(()=>playTone(250,400),320);
+}
+
+// מוזיקת רקע
+function startMusic(){document.getElementById("bgm").play().catch(()=>{});}
+function stopMusic(){const b=document.getElementById("bgm");b.pause();b.currentTime=0;}
+
+// עזר
+function shuffle(a){return [...a].sort(()=>Math.random()-0.5);}
+
+function updateHUD(){
+  timerEl.textContent   = timeLeft;
+  levelEl.textContent   = level;
+  scoreEl.textContent   = `${correct} / ${total}`;
+  completedEl.textContent = uniqueCorrect.size;
+}
+
+function calcTime(){
+  const t = 18 - (level-1)*2;
+  return t < 8 ? 8 : t;
+}
+
+// התחלת משחק מהשם
+function startGameFromName(){
+  const name = document.getElementById("playerNameInput").value.trim();
+  if(!name){
+    alert("יש להזין שם");
+    return;
+  }
+  playerName = name;
+  document.getElementById("title").textContent = `משחק הכתבה של ${playerName}`;
+  document.getElementById("nameScreen").style.display = "none";
+  document.getElementById("gameScreen").style.display = "block";
+  startGame();
+}
+
+function startGame(){
+  gameActive       = true;
+  reviewingErrors  = false;
+  mainQueue        = shuffle(ALL_WORDS);
+  errorQueue       = [];
+  current          = "";
+  total            = 0;
+  correct          = 0;
+  level            = 1;
+  allCorrect       = true;
+  locked           = false;
+  uniqueCorrect    = new Set();
+  feedback.textContent   = "";
+  feedback.className     = "feedback";
+  reinforce.textContent  = "";
+  certEl.style.display   = "none";
+  updateHUD();
+  startMusic();
+  nextWord(false);
+}
+
+function speak(){
+  if(!current) return;
+  const u = new SpeechSynthesisUtterance(current);
+  u.lang = "he-IL";
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+function startTimer(){
+  clearInterval(timerId);
+  timeLeft = calcTime();
+  updateHUD();
+  timerId = setInterval(()=>{
+    timeLeft--;
+    updateHUD();
+    if(timeLeft<=0 && !locked){
+      handleTimeUp();
+    }
+  },1000);
+}
+
+// בחירת מילה הבאה מתוך התורים
+function pickNextFromQueues(){
+  // אם התור הנוכחי ריק – עוברים לשלב הבא
+  if(mainQueue.length === 0){
+    if(!reviewingErrors && errorQueue.length > 0){
+      // סיימנו את כל המילים הראשיות → עכשיו עוברים לטעויות
+      reviewingErrors = true;
+      mainQueue = shuffle(errorQueue);
+      errorQueue = [];
+      feedback.textContent = "עכשיו חוזרים על המילים שהיו בהן טעויות 🙂";
+      feedback.className = "feedback";
+    } else if(reviewingErrors && errorQueue.length > 0){
+      // היינו כבר בשלב הטעויות, ונוספו טעויות חדשות → נעבור עליהן
+      mainQueue = shuffle(errorQueue);
+      errorQueue = [];
+    } else if(reviewingErrors && errorQueue.length === 0){
+      // אין יותר מילים – המשחק נגמר אוטומטית
+      endGame(true);
+      return false;
+    } else if(!reviewingErrors && errorQueue.length === 0){
+      // כל המילים נכונות בלי טעויות בכלל
+      endGame(true);
+      return false;
+    }
+  }
+
+  if(mainQueue.length === 0){
+    // אחרי כל המעברים עדיין אין מילים – נגמר
+    endGame(true);
+    return false;
+  }
+
+  current = mainQueue.shift();
+  return true;
+}
+
+// nextWord(skip=true/false): skip=true כשמשתמש לחץ "מילה חדשה"
+function nextWord(skip){
+  if(!gameActive) return;
+
+  clearInterval(timerId);
+
+  // אם דילגנו על מילה קיימת, ולא הייתה עדיין נעולה – להוסיף אותה לסוף רשימת הטעויות
+  if(skip && !locked && current){
+    if(!errorQueue.includes(current)){
+      errorQueue.push(current);
+    }
+  }
+
+  feedback.textContent   = "";
+  feedback.className     = "feedback";
+  reinforce.textContent  = "";
+  answerInput.value      = "";
+  answerInput.disabled   = false;
+  locked = false;
+
+  if(!pickNextFromQueues()){
+    return; // המשחק הסתיים
+  }
+
+  answerInput.focus();
+  speak();
+  startTimer();
+}
+
+function handleTimeUp(){
+  if(!gameActive) return;
+  locked = true;
+  total++;
+  allCorrect = false; // נגמר הזמן = לא הכול היה 100% מושלם
+  errorSound();
+  feedback.textContent = `⏱ נגמר הזמן ${playerName}, המילה הייתה: ${current}`;
+  feedback.className   = "feedback error";
+  if(!errorQueue.includes(current)){
+    errorQueue.push(current);
+  }
+  answerInput.disabled = true;
+  updateHUD();
+  clearInterval(timerId);
+  setTimeout(()=>nextWord(false),2000);
+}
+
+function check(){
+  if(!gameActive || !current || locked) return;
+  locked = true;
+  clearInterval(timerId);
+  total++;
+
+  const val = answerInput.value.trim();
+  if(val === current){
+    correct++;
+    successSound();
+    feedback.textContent = `כל הכבוד ${playerName}! ✅`;
+    feedback.className   = "feedback success";
+    uniqueCorrect.add(current);
+    maybeLevelUp();
+  } else {
+    allCorrect = false; // טעות כלשהי
+    errorSound();
+    feedback.textContent = `לא מדויק ${playerName} ❌ המילה: ${current}`;
+    feedback.className   = "feedback error";
+    if(!errorQueue.includes(current)){
+      errorQueue.push(current);
+    }
+  }
+
+  answerInput.disabled = true;
+  updateHUD();
+  setTimeout(()=>nextWord(false),2000);
+}
+
+function maybeLevelUp(){
+  const newLevel = Math.floor(correct / 5) + 1;
+  if(newLevel > level){
+    level = newLevel;
+    let msg = "";
+    if(level === 2) msg = `וואו! ${playerName}, עלית לשלב 2! 💦🌟`;
+    else if(level === 3) msg = `אין עלייך ${playerName}! שלב 3! 🌊👑`;
+    else if(level >= 4) msg = `${playerName}, את/ה מאסטר/ית המילים! 🤩🔥`;
+    reinforce.textContent = msg;
+  }
+}
+
+// סיום המשחק
+function endGame(auto=false){
+  if(!gameActive && !auto) return;
+  gameActive = false;
+  clearInterval(timerId);
+  stopMusic();
+  answerInput.disabled = true;
+
+  if(auto){
+    // תעודה רק אם כל המילים נענו לפחות פעם אחת, בלי אף טעות/נגמר הזמן
+    if(allCorrect && uniqueCorrect.size === ALL_WORDS.length && total > 0){
+      feedback.textContent = `🎉 כל הכבוד ${playerName}, סיימת את כל המילים בלי אף טעות!`;
+      feedback.className   = "feedback success";
+      certNameEl.textContent = playerName;
+      certEl.style.display = "block";
+    } else {
+      feedback.textContent = `סיימת את כל המילים ${playerName}, אבל היו גם טעויות בדרך 🙂`;
+      feedback.className   = "feedback";
+    }
+  } else {
+    feedback.textContent = `המשחק הסתיים ${playerName}. ניקוד סופי: ${correct}/${total}`;
+    feedback.className   = "feedback success";
+  }
+}
+
+// שליחת SMS – הילד/ה בוחר/ת איש קשר
+function sendSMS(){
+  if(!playerName) return;
+  const msg = `🎓 כל הכבוד ${playerName}! סיימתי את משחק ההכתבה על מים בלי אף טעות! 💧`;
+  const smsUrl = "sms:?&body=" + encodeURIComponent(msg);
+  window.location.href = smsUrl;
+}
+
+// Enter = בדיקה
+answerInput.addEventListener("keyup", (e)=>{
+  if(e.key === "Enter") check();
+});
+</script>
+</body>
+</html>
